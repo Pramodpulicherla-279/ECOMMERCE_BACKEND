@@ -42,6 +42,7 @@ async def upload_product_data(
     imageUrls: List[str] = Form(...),  # Use List[str] to receive multiple values
     mainImageUrl: str = Form(...),
     demanded: bool = Form(...),
+    keywords: str = Form(...),  # Add keywords parameter
     db: Session = Depends(get_db)
 ):
     db_product = Product(
@@ -52,7 +53,8 @@ async def upload_product_data(
         category=category,
         imageUrls=imageUrls,
         mainImageUrl=mainImageUrl,
-        demanded=demanded
+        demanded=demanded,
+        keywords=keywords  # Save keywords to the database
     )
     db.add(db_product)
     db.commit()

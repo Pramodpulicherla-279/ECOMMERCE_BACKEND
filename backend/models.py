@@ -22,5 +22,6 @@ class Product(Base):
     imageUrls = Column(JSON)  # Use JSON column to store list of URLs
     mainImageUrl = Column(String)
     demanded = Column(Boolean)  # Add the demanded column
+    keywords = Column(String)  # Add the keywords column
 
 Base.metadata.create_all(bind=engine)
