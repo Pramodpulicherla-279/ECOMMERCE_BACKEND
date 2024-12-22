@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, Form, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Query , Form, Body
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from models import Product, SessionLocal
 from typing import List
 
@@ -19,9 +20,52 @@ async def get_product(product_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Product not found")
     return product
 
+# @router.get("/products")
+# async def get_products(category: str = None, db: Session = Depends(get_db)):
+#     if category:
+#         products = db.query(Product).filter(Product.category == category).all()
+#     else:
+#         products = db.query(Product).all()
+#     return products
+
+# @router.get("/products-by-keywords")
+# async def get_products_by_keywords(keywords: str, db: Session = Depends(get_db)):
+#     keyword_list = keywords.split(',')
+#     keyword_conditions = " OR ".join([f"keywords LIKE :keyword{i}" for i in range(len(keyword_list))])
+#     sql = f"""
+#         SELECT id, name, description, price, stock, category, imageUrls, mainImageUrl, demanded, oldProductId, newProductId, keywords
+#         FROM products
+#         WHERE {keyword_conditions}
+#     """
+#     params = {f"keyword{i}": f"%{keyword.strip()}%" for i, keyword in enumerate(keyword_list)}
+#     result = db.execute(text(sql), params).mappings().all()
+    
+#     if not result:
+#         raise HTTPException(status_code=404, detail="No products found with the given keywords")
+    
+#     # Convert result to a list of dictionaries
+#     products = [dict(row) for row in result]
+#     print(products)
+#     return products
+
 @router.get("/products")
-async def get_products(category: str = None, db: Session = Depends(get_db)):
-    if category:
+async def get_products(category: str = None, keywords: str = None, db: Session = Depends(get_db)):
+    if keywords:
+        keyword_list = keywords.split(',')
+        keyword_conditions = " OR ".join([f"keywords LIKE :keyword{i}" for i in range(len(keyword_list))])
+        sql = f"""
+            SELECT id, name, description, price, stock, category, imageUrls, mainImageUrl, demanded, oldProductId, newProductId, keywords
+            FROM products
+            WHERE {keyword_conditions}
+        """
+        params = {f"keyword{i}": f"%{keyword.strip()}%" for i, keyword in enumerate(keyword_list)}
+        result = db.execute(text(sql), params).mappings().all()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="No products found with the given keywords")
+        
+        products = [dict(row) for row in result]
+    elif category:
         products = db.query(Product).filter(Product.category == category).all()
     else:
         products = db.query(Product).all()
