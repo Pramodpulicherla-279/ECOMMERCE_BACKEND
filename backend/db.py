@@ -15,3 +15,20 @@ def get_db1():
     except Error as e:
         print(f"Error while connecting to MySQL: {e}")
         return None
+
+def execute_query(query, params=None):
+    connection = get_db1()
+    if connection:
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(query, params)
+            result = cursor.fetchall()
+            connection.commit()
+            return result
+        except Error as e:
+            print(f"Error executing query: {e}")
+            return None
+        finally:
+            cursor.close()
+            connection.close()
+    return None

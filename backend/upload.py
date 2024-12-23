@@ -1,125 +1,96 @@
-from fastapi import APIRouter, Depends, HTTPException, Query , Form, Body
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from models import Product, SessionLocal
-from typing import List
+from fastapi import APIRouter, HTTPException, Query, Form, Body
+from typing import List, Optional
+from pydantic import BaseModel
+from db import execute_query
+import json
 
 router = APIRouter()
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# SQL query to create the products table
+create_table_query = """
+CREATE TABLE IF NOT EXISTS products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    price FLOAT NOT NULL,
+    stock INT NOT NULL,
+    category VARCHAR(255),
+    imageUrls JSON,
+    mainImageUrl VARCHAR(255),
+    demanded BOOLEAN,
+    keywords VARCHAR(255)
+)
+"""
+
+# Execute the create table query
+execute_query(create_table_query)
+
+class Product(BaseModel):
+    name: str
+    description: str
+    price: float
+    stock: int
+    category: str
+    imageUrls: List[str]
+    mainImageUrl: str
+    demanded: bool
+    keywords: str
+
+class ReplaceDemandedProduct(BaseModel):
+    oldProductId: int
+    newProductId: int
 
 @router.get("/products/{product_id}")
-async def get_product(product_id: int, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
+async def get_product(product_id: int):
+    query = "SELECT * FROM products WHERE id = %s"
+    result = execute_query(query, (product_id,))
+    if not result:
         raise HTTPException(status_code=404, detail="Product not found")
+    product = result[0]
+    product['imageUrls'] = json.loads(product['imageUrls'])
     return product
 
-# @router.get("/products")
-# async def get_products(category: str = None, db: Session = Depends(get_db)):
-#     if category:
-#         products = db.query(Product).filter(Product.category == category).all()
-#     else:
-#         products = db.query(Product).all()
-#     return products
-
-# @router.get("/products-by-keywords")
-# async def get_products_by_keywords(keywords: str, db: Session = Depends(get_db)):
-#     keyword_list = keywords.split(',')
-#     keyword_conditions = " OR ".join([f"keywords LIKE :keyword{i}" for i in range(len(keyword_list))])
-#     sql = f"""
-#         SELECT id, name, description, price, stock, category, imageUrls, mainImageUrl, demanded, oldProductId, newProductId, keywords
-#         FROM products
-#         WHERE {keyword_conditions}
-#     """
-#     params = {f"keyword{i}": f"%{keyword.strip()}%" for i, keyword in enumerate(keyword_list)}
-#     result = db.execute(text(sql), params).mappings().all()
-    
-#     if not result:
-#         raise HTTPException(status_code=404, detail="No products found with the given keywords")
-    
-#     # Convert result to a list of dictionaries
-#     products = [dict(row) for row in result]
-#     print(products)
-#     return products
-
 @router.get("/products")
-async def get_products(category: str = None, keywords: str = None, db: Session = Depends(get_db)):
+async def get_products(category: Optional[str] = None, keywords: Optional[str] = None):
     if keywords:
         keyword_list = keywords.split(',')
-        keyword_conditions = " OR ".join([f"keywords LIKE :keyword{i}" for i in range(len(keyword_list))])
-        sql = f"""
-            SELECT id, name, description, price, stock, category, imageUrls, mainImageUrl, demanded, oldProductId, newProductId, keywords
-            FROM products
-            WHERE {keyword_conditions}
-        """
-        params = {f"keyword{i}": f"%{keyword.strip()}%" for i, keyword in enumerate(keyword_list)}
-        result = db.execute(text(sql), params).mappings().all()
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="No products found with the given keywords")
-        
-        products = [dict(row) for row in result]
+        keyword_conditions = " OR ".join([f"keywords LIKE %s" for _ in keyword_list])
+        query = f"SELECT * FROM products WHERE {keyword_conditions}"
+        params = tuple(f"%{keyword.strip()}%" for keyword in keyword_list)
+        result = execute_query(query, params)
     elif category:
-        products = db.query(Product).filter(Product.category == category).all()
+        query = "SELECT * FROM products WHERE category = %s"
+        result = execute_query(query, (category,))
     else:
-        products = db.query(Product).all()
-    return products
+        query = "SELECT * FROM products"
+        result = execute_query(query)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="No products found")
+    return result
 
 @router.get("/demanded-products")
-async def get_demanded_products(db: Session = Depends(get_db)):
-    products = db.query(Product).filter(Product.demanded == True).all()
-    return products
+async def get_demanded_products():
+    query = "SELECT * FROM products WHERE demanded = TRUE"
+    result = execute_query(query)
+    for product in result:
+        product['imageUrls'] = json.loads(product['imageUrls'])
+    return result
 
 @router.post("/upload")
-async def upload_product_data(
-    name: str = Form(...),
-    description: str = Form(...),
-    price: float = Form(...),
-    stock: int = Form(...),
-    category: str = Form(...),
-    imageUrls: List[str] = Form(...),  # Use List[str] to receive multiple values
-    mainImageUrl: str = Form(...),
-    demanded: bool = Form(...),
-    keywords: str = Form(...),  # Add keywords parameter
-    db: Session = Depends(get_db)
-):
-    db_product = Product(
-        name=name,
-        description=description,
-        price=price,
-        stock=stock,
-        category=category,
-        imageUrls=imageUrls,
-        mainImageUrl=mainImageUrl,
-        demanded=demanded,
-        keywords=keywords  # Save keywords to the database
-    )
-    db.add(db_product)
-    db.commit()
-
+async def upload_product_data(product: Product):
+    query = """
+        INSERT INTO products (name, description, price, stock, category, imageUrls, mainImageUrl, demanded, keywords)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    params = (product.name, product.description, product.price, product.stock, product.category, json.dumps(product.imageUrls), product.mainImageUrl, product.demanded, product.keywords)
+    execute_query(query, params)
     return {"message": "Product data uploaded successfully"}
 
 @router.post("/replace-demanded-product")
-async def replace_demanded_product(
-    oldProductId: int = Body(...),
-    newProductId: int = Body(...),
-    db: Session = Depends(get_db)
-):
-    old_product = db.query(Product).filter(Product.id == oldProductId).first()
-    new_product = db.query(Product).filter(Product.id == newProductId).first()
-
-    if not old_product or not new_product:
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    old_product.demanded = False
-    new_product.demanded = True
-
-    db.commit()
-
+async def replace_demanded_product(replace_data: ReplaceDemandedProduct):
+    query1 = "UPDATE products SET demanded = FALSE WHERE id = %s"
+    query2 = "UPDATE products SET demanded = TRUE WHERE id = %s"
+    execute_query(query1, (replace_data.oldProductId,))
+    execute_query(query2, (replace_data.newProductId,))
     return {"message": "Product replacement successful"}
