@@ -2,6 +2,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from upload import router as upload_router
+from cart import router as cart_router
+from favorites import router as favorites_router
 import uvicorn
 
 
@@ -26,6 +28,9 @@ def read_root():
 
 # Include your routers here
 app.include_router(upload_router)
+app.include_router(cart_router)
+app.include_router(favorites_router)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8001)
