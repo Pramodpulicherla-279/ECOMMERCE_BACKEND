@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from upload import router as upload_router
 from cart import router as cart_router
 from favorites import router as favorites_router
+from orders import router as orders_router
 import uvicorn
+from payments import router as payments_router  # Import your payments router
 
 
 app = FastAPI(docs_url="/docs")
@@ -30,6 +32,8 @@ def read_root():
 app.include_router(upload_router)
 app.include_router(cart_router)
 app.include_router(favorites_router)
+app.include_router(orders_router)
+app.include_router(payments_router, prefix="/api")
 
 
 if __name__ == "__main__":
