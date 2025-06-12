@@ -7,6 +7,8 @@ from favorites import router as favorites_router
 from orders import router as orders_router
 import uvicorn
 from payments import router as payments_router  # Import your payments router
+from reg import user_router
+
 
 
 app = FastAPI(docs_url="/docs")
@@ -34,6 +36,7 @@ app.include_router(cart_router)
 app.include_router(favorites_router)
 app.include_router(orders_router)
 app.include_router(payments_router, prefix="/api")
+app.include_router(user_router)
 
 
 if __name__ == "__main__":
