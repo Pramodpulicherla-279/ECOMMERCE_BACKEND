@@ -8,7 +8,8 @@ from orders import router as orders_router
 import uvicorn
 from payments import router as payments_router  # Import your payments router
 from reg import user_router
-
+from fastapi import Request
+import logging
 
 
 app = FastAPI(docs_url="/docs")
@@ -17,6 +18,14 @@ origins = [
     "*",  # Allow all origins
 ]
 
+@app.middleware("http")
+async def log_errors(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        logging.error(f"Error in {request.url}: {str(e)}", exc_info=True)
+        raise
+    
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

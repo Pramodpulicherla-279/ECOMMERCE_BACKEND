@@ -1,27 +1,46 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header, status
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from db import execute_query, get_db1
 import razorpay
-from payments import razorpay_client  # Import the Razorpay client
+from payments import razorpay_client
 import os
 import json
 from dotenv import load_dotenv
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 router = APIRouter()
 
-# Table creation (keep existing)
+# Security configurations
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Table creation functions
 def create_orders_table():
     query = """
     CREATE TABLE IF NOT EXISTS orders (
         order_id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
         order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        payment_date TIMESTAMP NULL,
         total_amount DECIMAL(10, 2) NOT NULL,
         status VARCHAR(20) DEFAULT 'Processing',
-        razorpay_order_id VARCHAR(255) NULL
+        razorpay_order_id VARCHAR(255) NULL,
+        razorpay_payment_id VARCHAR(255) NULL,
+        shipping_address_id INT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
     );
     """
     execute_query(query)
@@ -32,6 +51,7 @@ def create_order_items_table():
         order_id INT NOT NULL,
         product_id INT NOT NULL,
         quantity INT NOT NULL,
+        price_at_purchase DECIMAL(10, 2) NOT NULL,
         PRIMARY KEY (order_id, product_id),
         FOREIGN KEY (order_id) REFERENCES orders(order_id),
         FOREIGN KEY (product_id) REFERENCES products(id)
@@ -39,6 +59,7 @@ def create_order_items_table():
     """
     execute_query(query)
 
+# Create tables on startup
 create_orders_table()
 create_order_items_table()
 
@@ -48,8 +69,8 @@ class OrderItem(BaseModel):
     quantity: int
 
 class CreateOrderRequest(BaseModel):
-    user_id: int
     items: List[OrderItem]
+    shipping_address_id: Optional[int] = None
 
 class RazorpayPaymentConfirmation(BaseModel):
     order_id: int
@@ -57,46 +78,101 @@ class RazorpayPaymentConfirmation(BaseModel):
     razorpay_order_id: str
     razorpay_signature: str
 
-@router.post("/orders", response_model=dict)
-async def create_order(order: CreateOrderRequest):
+class OrderResponse(BaseModel):
+    status: str
+    order_id: int
+    razorpay_order_id: str
+    amount: float
+    currency: str
+    items: List[dict]
+    message: str
+
+class PublicCreateOrderRequest(BaseModel):
+    user_id: int
+    items: List[OrderItem]
+    shipping_address_id: Optional[int] = None
+
+# Authentication functions
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = int(payload.get("sub"))
+        if user_id is None:
+            raise credentials_exception
+    except (JWTError, ValueError) as e:
+        logger.error(f"JWT Error: {str(e)}")
+        raise credentials_exception
+    
+    # Verify user exists in database
+    user = execute_query("SELECT id FROM users WHERE id = %s", (user_id,))
+    if not user:
+        raise credentials_exception
+    
+    return {"id": user_id}
+
+# Order endpoints
+@router.post("/orders/public", response_model=OrderResponse)
+async def create_order_public(
+    order_request: PublicCreateOrderRequest
+):
     connection = None
     cursor = None
+    user_id = order_request.user_id
+
     try:
+        logger.info(f"Creating PUBLIC order for user {user_id}")
+
         # Validate input items
-        if not order.items:
-            raise HTTPException(status_code=400, detail="No items in order")
-        
-        # Get product prices from database
-        product_ids = tuple(item.product_id for item in order.items)
+        if not order_request.items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No items in order"
+            )
+
+        # Get product prices and availability
+        product_ids = tuple(item.product_id for item in order_request.items)
         placeholders = ','.join(['%s'] * len(product_ids))
         price_query = f"""
-            SELECT id, price, name 
+            SELECT id, price, name, stock 
             FROM products 
-            WHERE id IN ({placeholders})
+            WHERE id IN ({placeholders}) 
             AND status = 'active'
         """
         products = execute_query(price_query, product_ids)
-        
+
         # Verify all products exist and are available
         if len(products) != len(product_ids):
             found_ids = {p['id'] for p in products}
             missing = [str(id) for id in product_ids if id not in found_ids]
             raise HTTPException(
-                status_code=404, 
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Products not found or unavailable: {', '.join(missing)}"
             )
-        
-        # Create price mapping and calculate total
+
+        # Check stock availability
+        for item in order_request.items:
+            product = next(p for p in products if p['id'] == item.product_id)
+            if product['stock'] < item.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Not enough stock for product {product['id']}"
+                )
+
+        # Calculate total amount
         price_map = {p['id']: float(p['price']) for p in products}
         total_amount = round(sum(
             price_map[item.product_id] * item.quantity 
-            for item in order.items
+            for item in order_request.items
         ), 2)
 
-        # Validate total amount
         if total_amount <= 0:
             raise HTTPException(
-                status_code=400, 
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid order total amount"
             )
 
@@ -104,29 +180,27 @@ async def create_order(order: CreateOrderRequest):
         connection = get_db1()
         if not connection:
             raise HTTPException(
-                status_code=500, 
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Database connection error"
             )
-            
+
         cursor = connection.cursor(dictionary=True)
-        
-        # Start transaction
         connection.start_transaction()
-        
+
         # Insert into orders table
         cursor.execute(
             """
             INSERT INTO orders 
-            (user_id, total_amount, status) 
-            VALUES (%s, %s, %s)
+            (user_id, total_amount, status, shipping_address_id) 
+            VALUES (%s, %s, %s, %s)
             """,
-            (order.user_id, total_amount, 'Created')
+            (user_id, total_amount, 'Created', order_request.shipping_address_id)
         )
         order_id = cursor.lastrowid
 
         # Insert order items
         order_items = []
-        for item in order.items:
+        for item in order_request.items:
             cursor.execute(
                 """
                 INSERT INTO order_items 
@@ -138,7 +212,8 @@ async def create_order(order: CreateOrderRequest):
             order_items.append({
                 'product_id': item.product_id,
                 'quantity': item.quantity,
-                'price': price_map[item.product_id]
+                'price': price_map[item.product_id],
+                'name': next(p['name'] for p in products if p['id'] == item.product_id)
             })
 
         # Create Razorpay order
@@ -149,10 +224,10 @@ async def create_order(order: CreateOrderRequest):
             'payment_capture': 1,
             'notes': {
                 'order_id': str(order_id),
-                'user_id': str(order.user_id)
+                'user_id': str(user_id)
             }
         })
-        
+
         # Update order with Razorpay ID
         cursor.execute(
             """
@@ -162,10 +237,9 @@ async def create_order(order: CreateOrderRequest):
             """,
             (razorpay_order['id'], order_id)
         )
-        
-        # Commit transaction
+
         connection.commit()
-        
+
         return {
             "status": "success",
             "order_id": order_id,
@@ -179,122 +253,183 @@ async def create_order(order: CreateOrderRequest):
     except razorpay.errors.BadRequestError as e:
         if connection:
             connection.rollback()
+        logger.error(f"Razorpay error: {str(e)}")
         raise HTTPException(
-            status_code=400,
-            detail=f"Razorpay error: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Payment processing error: {str(e)}"
         )
     except Exception as e:
         if connection:
             connection.rollback()
+        logger.error(f"Order creation failed: {str(e)}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Order creation failed: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Order creation failed"
         )
     finally:
         if cursor:
             cursor.close()
         if connection and connection.is_connected():
             connection.close()
-
-@router.get("/orders")
-async def get_user_orders(user_id: int):
-    # Get all orders for the user
-    orders_query = """
-    SELECT * FROM orders WHERE user_id = %s ORDER BY order_date DESC
+            
+@router.get("/orders/user/{user_id}", response_model=List[dict])
+async def get_orders_by_user_id(user_id: int):
     """
-    orders = execute_query(orders_query, (user_id,))
-    if not orders:
-        return []
-
-    # For each order, get its items and product details
-    for order in orders:
-        items_query = """
-        SELECT oi.product_id, oi.quantity, p.name, p.price, p.mainImageUrl
-        FROM order_items oi
-        JOIN products p ON oi.product_id = p.id
-        WHERE oi.order_id = %s
+    Public endpoint to get orders by user ID
+    """
+    try:
+        # Verify user exists
+        user_exists = execute_query("SELECT id FROM users WHERE id = %s", (user_id,))
+        if not user_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Simplified query without addresses join
+        orders_query = """
+        SELECT 
+            order_id,
+            user_id,
+            order_date,
+            payment_date,
+            total_amount,
+            status,
+            razorpay_order_id,
+            razorpay_payment_id,
+            shipping_address_id
+        FROM orders
+        WHERE user_id = %s 
+        ORDER BY order_date DESC
         """
-        items = execute_query(items_query, (order['order_id'],))
-        order['items'] = items
-    return orders
-
-
-@router.post("/orders/confirm-razorpay-payment")
-async def confirm_razorpay_payment(confirmation: RazorpayPaymentConfirmation):
+        orders = execute_query(orders_query, (user_id,)) or []
+        
+        # Get items for each order
+        for order in orders:
+            items_query = """
+            SELECT 
+                oi.product_id, 
+                oi.quantity, 
+                oi.price_at_purchase as price,
+                p.name, 
+                p.mainImageUrl
+            FROM order_items oi
+            JOIN products p ON oi.product_id = p.id
+            WHERE oi.order_id = %s
+            """
+            order['items'] = execute_query(items_query, (order['order_id'],)) or []
+        
+        return orders
+        
+    except Exception as e:
+        logger.error(f"Error fetching orders: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error fetching orders"
+        )
+        
+@router.get("/verify-token")
+async def verify_token(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = int(payload.get("sub"))
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        # Verify user exists
+        user = execute_query("SELECT id FROM users WHERE id = %s", (user_id,))
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+        
+        return {"user_id": user_id}
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+@router.post("/orders/confirm-razorpay-payment", response_model=dict)
+async def confirm_razorpay_payment(
+    confirmation: RazorpayPaymentConfirmation,
+    current_user: dict = Depends(get_current_user)
+):
     connection = None
     cursor = None
+    
     try:
-        # 1. Verify payment signature
-        params_dict = {
+        # Verify payment signature
+        razorpay_client.utility.verify_payment_signature({
             'razorpay_order_id': confirmation.razorpay_order_id,
             'razorpay_payment_id': confirmation.razorpay_payment_id,
             'razorpay_signature': confirmation.razorpay_signature
-        }
-        razorpay_client.utility.verify_payment_signature(params_dict)
-
-        # 2. Get database connection
+        })
+        
+        # Get database connection
         connection = get_db1()
         if not connection:
-            raise HTTPException(status_code=500, detail="Database connection error")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database connection error"
+            )
+            
         cursor = connection.cursor(dictionary=True)
-
-        # 3. Verify and fetch order details
+        
+        # Verify order belongs to the current user
         cursor.execute(
-            """SELECT o.*, 
-                  (SELECT JSON_ARRAYAGG(
-                      JSON_OBJECT(
-                        'product_id', oi.product_id,
-                        'quantity', oi.quantity,
-                        'name', p.name,
-                        'price', p.price,
-                        'image', p.mainImageUrl
-                      )
-                  ) 
-                  FROM order_items oi
-                  JOIN products p ON oi.product_id = p.id
-                  WHERE oi.order_id = o.order_id
-                  ) AS items
-               FROM orders o 
-               WHERE order_id = %s AND razorpay_order_id = %s""",
-            (confirmation.order_id, confirmation.razorpay_order_id)
+            "SELECT user_id FROM orders WHERE order_id = %s",
+            (confirmation.order_id,)
         )
         order = cursor.fetchone()
-
-        if not order:
-            raise HTTPException(status_code=404, detail="Order not found or Razorpay order ID mismatch")
-
-        # 4. Update order status
+        
+        if not order or order['user_id'] != current_user['id']:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Order not found or access denied"
+            )
+        
+        # Update order status
         cursor.execute(
-            """UPDATE orders 
-               SET status = 'Paid', 
-                   razorpay_payment_id = %s,
-                   payment_date = CURRENT_TIMESTAMP
-               WHERE order_id = %s""",
+            """
+            UPDATE orders 
+            SET status = 'Paid', 
+                razorpay_payment_id = %s,
+                payment_date = CURRENT_TIMESTAMP
+            WHERE order_id = %s
+            """,
             (confirmation.razorpay_payment_id, confirmation.order_id)
         )
-
+        
         connection.commit()
-
-        # Convert JSON string to dict if needed
-        if isinstance(order['items'], str):
-            order['items'] = json.loads(order['items'])
-
+        
         return {
             "status": "success",
-            "message": "Payment confirmed and order updated",
-            "order": order
+            "message": "Payment confirmed and order updated"
         }
-
+        
     except razorpay.errors.SignatureVerificationError as e:
         if connection:
             connection.rollback()
-        raise HTTPException(status_code=400, detail="Invalid payment signature")
+        logger.error(f"Payment signature verification failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payment signature"
+        )
     except Exception as e:
         if connection:
             connection.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Payment confirmation failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Payment confirmation failed"
+        )
     finally:
         if cursor:
             cursor.close()
-        if connection:
+        if connection and connection.is_connected():
             connection.close()
