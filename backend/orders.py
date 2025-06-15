@@ -187,14 +187,22 @@ async def create_order_public(
         cursor = connection.cursor(dictionary=True)
         connection.start_transaction()
 
-        # Insert into orders table
+        # Get the next user_order_number for this user
+        cursor.execute(
+            "SELECT COALESCE(MAX(user_order_number), 0) + 1 AS next_order_num "
+            "FROM orders WHERE user_id = %s",
+            (user_id,)
+        )
+        next_order_num = cursor.fetchone()['next_order_num']
+
+        # Insert into orders table with user_order_number
         cursor.execute(
             """
             INSERT INTO orders 
-            (user_id, total_amount, status, shipping_address_id) 
-            VALUES (%s, %s, %s, %s)
+            (user_id, total_amount, status, shipping_address_id, user_order_number) 
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (user_id, total_amount, 'Created', order_request.shipping_address_id)
+            (user_id, total_amount, 'Created', order_request.shipping_address_id, next_order_num)
         )
         order_id = cursor.lastrowid
 
@@ -243,6 +251,7 @@ async def create_order_public(
         return {
             "status": "success",
             "order_id": order_id,
+            "user_order_number": next_order_num,  # Add this line
             "razorpay_order_id": razorpay_order['id'],
             "amount": total_amount,
             "currency": "INR",
@@ -271,12 +280,51 @@ async def create_order_public(
             cursor.close()
         if connection and connection.is_connected():
             connection.close()
+
+def migrate_existing_orders():
+    connection = get_db1()
+    cursor = connection.cursor(dictionary=True)
+    
+    try:
+        # Get all user IDs with orders
+        cursor.execute("SELECT DISTINCT user_id FROM orders")
+        users = cursor.fetchall()
+        
+        for user in users:
+            user_id = user['user_id']
+            
+            # Get all orders for this user ordered by creation date
+            cursor.execute(
+                "SELECT order_id FROM orders WHERE user_id = %s ORDER BY order_date ASC",
+                (user_id,)
+            )
+            orders = cursor.fetchall()
+            
+            # Update each order with sequential user_order_number
+            for index, order in enumerate(orders, start=1):
+                cursor.execute(
+                    "UPDATE orders SET user_order_number = %s WHERE order_id = %s",
+                    (index, order['order_id'])
+                )
+        
+        connection.commit()
+        logger.info("Successfully migrated existing orders")
+        
+    except Exception as e:
+        connection.rollback()
+        logger.error(f"Migration failed: {str(e)}")
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
+
+# Run the migration (call this once)
+# migrate_existing_orders()
             
 @router.get("/orders/user/{user_id}", response_model=List[dict])
 async def get_orders_by_user_id(user_id: int):
-    """
-    Public endpoint to get orders by user ID
-    """
     try:
         # Verify user exists
         user_exists = execute_query("SELECT id FROM users WHERE id = %s", (user_id,))
@@ -286,11 +334,12 @@ async def get_orders_by_user_id(user_id: int):
                 detail="User not found"
             )
         
-        # Simplified query without addresses join
+        # Include user_order_number in the query
         orders_query = """
         SELECT 
             order_id,
             user_id,
+            user_order_number,
             order_date,
             payment_date,
             total_amount,
@@ -303,7 +352,7 @@ async def get_orders_by_user_id(user_id: int):
         ORDER BY order_date DESC
         """
         orders = execute_query(orders_query, (user_id,)) or []
-        
+
         # Get items for each order
         for order in orders:
             items_query = """
@@ -382,7 +431,7 @@ async def confirm_razorpay_payment(
         
         # Verify order belongs to the current user
         cursor.execute(
-            "SELECT user_id FROM orders WHERE order_id = %s",
+            "SELECT user_id, user_order_number FROM orders WHERE order_id = %s",
             (confirmation.order_id,)
         )
         order = cursor.fetchone()
@@ -396,21 +445,27 @@ async def confirm_razorpay_payment(
         # Update order status
         cursor.execute(
             """
-            UPDATE orders 
-            SET status = 'Paid', 
-                razorpay_payment_id = %s,
-                payment_date = CURRENT_TIMESTAMP
+            SELECT order_id, user_order_number, status 
+            FROM orders 
             WHERE order_id = %s
             """,
-            (confirmation.razorpay_payment_id, confirmation.order_id)
+            (confirmation.order_id,)
         )
+        updated_order = cursor.fetchone()
+
         
         connection.commit()
         
         return {
-            "status": "success",
-            "message": "Payment confirmed and order updated"
-        }
+             "status": "success",
+             "message": "Payment confirmed and order updated",
+             "order": {
+                 "order_id": updated_order['order_id'],
+                 "user_order_number": updated_order['user_order_number'],
+                 "status": updated_order['status'],
+                 "razorpay_payment_id": confirmation.razorpay_payment_id
+             }
+         }
         
     except razorpay.errors.SignatureVerificationError as e:
         if connection:
