@@ -1,15 +1,12 @@
-# render.yaml
 services:
   - type: web
-    name: ecommerce-backend  # Your service name
-    runtime: python
-    python:
-      version: 3.9.13       # Match your FastAPI Python version
+    name: ecommerce-backend
+    env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 8000
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port 8000
     envVars:
       - key: DATABASE_URL
         value: postgres://user:pass@your-db-url:5432/dbname  # Replace with your DB URL
       - key: SECRET_KEY
-        generateValue: true  # Auto-generate a secure key
-    plan: free              # Start with free tier (upgrade later)
+        generateValue: true
+    plan: free
