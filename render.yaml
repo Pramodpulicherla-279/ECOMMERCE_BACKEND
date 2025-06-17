@@ -1,12 +1,24 @@
 services:
   - type: web
     name: ecommerce-backend
-    env: python
-    buildCommand: pip install -r requirements.txt
+    runtime: python
+    python:
+      version: 3.9  # Match your local Python version
+    buildCommand: |
+      pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port 8000
     envVars:
-      - key: DATABASE_URL
-        value: postgres://user:pass@your-db-url:5432/dbname  # Replace with your DB URL
-      - key: SECRET_KEY
-        generateValue: true
+      - key: DB_HOST
+        value: your-mysql-host.on.render.com  # Will be provided when you create MySQL DB
+      - key: DB_USER
+        value: root  # Or custom user you create
+      - key: DB_PASS
+        generateValue: true  # Auto-generate secure password
+      - key: DB_NAME
+        value: Ecommerce_DB
     plan: free
+
+databases:
+  - name: ecommerce_mysql  # Creates a managed MySQL instance
+    plan: free  # Free tier (limited to 90 days)
+    databaseName: Ecommerce_DB

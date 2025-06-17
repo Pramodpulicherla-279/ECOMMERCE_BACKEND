@@ -1,13 +1,15 @@
 import mysql.connector
 from mysql.connector import Error
+import os
 
 def get_db1():
+    """Establish and return a database connection"""
     try:
         connection = mysql.connector.connect(
-            host='127.0.0.1',
-            user='root',
-            password='Pramod@23057',
-            database='Ecommerce_DB'
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASS"),
+            database=os.getenv("DB_NAME")
         )
         if connection.is_connected():
             print("Connected to MySQL database")
@@ -17,18 +19,30 @@ def get_db1():
         return None
 
 def execute_query(query, params=None):
+    """Execute a query and return results"""
     connection = get_db1()
-    if connection:
+    if not connection:
+        return None
+        
+    cursor = None
+    try:
         cursor = connection.cursor(dictionary=True)
-        try:
-            cursor.execute(query, params)
+        cursor.execute(query, params or ())
+        
+        # Handle SELECT vs INSERT/UPDATE differently
+        if query.strip().upper().startswith('SELECT'):
             result = cursor.fetchall()
+        else:
             connection.commit()
-            return result
-        except Error as e:
-            print(f"Error executing query: {e}")
-            return None
-        finally:
+            result = cursor.rowcount
+            
+        return result
+    except Error as e:
+        print(f"Error executing query: {e}")
+        connection.rollback()
+        return None
+    finally:
+        if cursor:
             cursor.close()
+        if connection and connection.is_connected():
             connection.close()
-    return None
