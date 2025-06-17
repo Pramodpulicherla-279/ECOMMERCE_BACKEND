@@ -1,8 +1,16 @@
 fastapi==0.95.2
 uvicorn==0.22.0
-mysql-connector-python==8.1.0 
+mysql-connector-python==8.1.0
 python-multipart==0.0.6
 mangum==0.17.0
 razorpay==1.4.2
-setuptools>=68.0.0  # Contains pkg_resources
-# Add other dependencies (e.g., databases, payment SDKs)
+setuptools>=68.0.0
+python-dotenv>=1.0.0
+bcrypt>=4.0.0
+boto3>=1.28.0
+python-jose[cryptography]>=3.3.0
+# For OAuth2 support in FastAPI
+passlib[bcrypt]>=1.7.4
+# Logging is part of Python standard library
+# urllib.parse is part of Python standard library
+# Add any other dependencies as needed
