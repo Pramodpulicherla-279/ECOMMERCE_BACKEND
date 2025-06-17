@@ -3,5 +3,5 @@ uvicorn==0.22.0
 mysql-connector-python==8.1.0 
 python-multipart==0.0.6
 mangum==0.17.0
-razorpay==1.4.4
+razorpay==1.4.2
 # Add other dependencies (e.g., databases, payment SDKs)
