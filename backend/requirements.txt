@@ -1,3 +1,5 @@
-fastapi
-uvicorn
-# All your other dependencies
+fastapi==0.95.2
+uvicorn==0.22.0
+python-multipart==0.0.6
+mangum==0.17.0
+# Add other dependencies (e.g., databases, payment SDKs)
