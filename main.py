@@ -5,9 +5,10 @@ from upload import router as upload_router
 from cart import router as cart_router
 from favorites import router as favorites_router
 from orders import router as orders_router
+from user_addresses import router as user_addresses_router  # Import your user addresses router
 import uvicorn
 from payments import router as payments_router  # Import your payments router
-from reg import user_router
+from user import user_router
 from fastapi import Request
 import logging
 
@@ -46,6 +47,8 @@ app.include_router(favorites_router)
 app.include_router(orders_router)
 app.include_router(payments_router, prefix="/api")
 app.include_router(user_router)
+app.include_router(user_addresses_router)  # Include user addresses router
+
 
 
 if __name__ == "__main__":
