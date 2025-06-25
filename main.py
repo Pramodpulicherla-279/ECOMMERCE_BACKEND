@@ -9,6 +9,7 @@ from user_addresses import router as user_addresses_router  # Import your user a
 import uvicorn
 from payments import router as payments_router  # Import your payments router
 from user import user_router
+from agent.agent import router as agent_router
 from fastapi import Request
 import logging
 
@@ -48,6 +49,7 @@ app.include_router(orders_router)
 app.include_router(payments_router, prefix="/api")
 app.include_router(user_router)
 app.include_router(user_addresses_router)  # Include user addresses router
+app.include_router(agent_router)
 
 
 
