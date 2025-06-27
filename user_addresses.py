@@ -6,6 +6,7 @@ from db import get_db1
 router = APIRouter()
 
 class UserAddresses(BaseModel):
+    id: int  
     user_id: int
     full_name: str
     mobile_number: Optional[str] = None
@@ -20,8 +21,26 @@ class UserAddresses(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
 
-@router.post("/user/addresses", response_model=UserAddresses)
-async def add_user_address(address: UserAddresses):
+class CreateAddress(BaseModel):
+    user_id: int
+    full_name: str
+    mobile_number: Optional[str] = None
+    pincode: str
+    line1: str
+    # line2: Optional[str] = None
+    landmark: Optional[str] = None
+    city: str
+    state: str
+    country: str = "India"
+    is_default: Optional[bool] = False
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+class SetDefaultAddressRequest(BaseModel):
+    address_id: int
+
+@router.post("/user/addresses", response_model=CreateAddress)
+async def add_user_address(address: CreateAddress):
     """
     Add a new address for the user.
     """
@@ -74,3 +93,50 @@ async def get_user_addresses(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching addresses: {str(e)}")
     
+@router.put("/addresses/set-default")
+async def set_default_address(payload: SetDefaultAddressRequest):
+    """
+    Set a specific address as default using only address_id.
+    """
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    cursor = db.cursor(dictionary=True)
+    try:
+        # Get user_id for the address
+        cursor.execute("SELECT user_id FROM user_addresses WHERE id=%s", (payload.address_id,))
+        result = cursor.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Address not found")
+        user_id = result['user_id']
+
+        # Unset all previous defaults for this user
+        cursor.execute("UPDATE user_addresses SET is_default=0 WHERE user_id=%s", (user_id,))
+        # Set the selected address as default
+        cursor.execute("UPDATE user_addresses SET is_default=1 WHERE id=%s", (payload.address_id,))
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error setting default address: {str(e)}")
+    
+@router.delete("/user/addresses/{address_id}")
+async def delete_user_address(address_id: int):
+    """
+    Delete a user address by its ID.
+    """
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM user_addresses WHERE id=%s", (address_id,))
+        address = cursor.fetchone()
+        if not address:
+            raise HTTPException(status_code=404, detail="Address not found")
+        cursor.execute("DELETE FROM user_addresses WHERE id=%s", (address_id,))
+        db.commit()
+        return {"success": True, "message": "Address deleted"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting address: {str(e)}")
