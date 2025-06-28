@@ -140,3 +140,69 @@ async def delete_user_address(address_id: int):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error deleting address: {str(e)}")
+
+@router.put("/user/addresses/{address_id}", response_model=UserAddresses)
+async def update_user_address(address_id: int, address: CreateAddress):
+    """
+    Update a user address by its ID.
+    """
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM user_addresses WHERE id=%s", (address_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Address not found")
+        # If is_default is True, unset previous defaults for this user
+        if address.is_default:
+            cursor.execute(
+                "UPDATE user_addresses SET is_default=0 WHERE user_id=%s", (address.user_id,)
+            )
+        cursor.execute("""
+            UPDATE user_addresses SET
+                full_name=%s,
+                mobile_number=%s,
+                pincode=%s,
+                line1=%s,
+                landmark=%s,
+                city=%s,
+                state=%s,
+                country=%s,
+                is_default=%s,
+                lat=%s,
+                lon=%s
+            WHERE id=%s
+        """, (
+            address.full_name, address.mobile_number, address.pincode,
+            address.line1, address.landmark, address.city, address.state,
+            address.country, int(address.is_default), address.lat, address.lon,
+            address_id
+        ))
+        db.commit()
+        cursor.execute("SELECT * FROM user_addresses WHERE id=%s", (address_id,))
+        updated = cursor.fetchone()
+        return updated
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating address: {str(e)}")
+    
+@router.get("/addresses/{address_id}", response_model=UserAddresses)
+async def get_address(address_id: int):
+    """
+    Get a specific address by its ID.
+    """
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM user_addresses WHERE id = %s", (address_id,))
+        address = cursor.fetchone()
+        if not address:
+            raise HTTPException(status_code=404, detail="Address not found")
+        return address
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching address: {str(e)}")

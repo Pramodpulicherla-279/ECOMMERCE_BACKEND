@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException
+from typing import List
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 from db import execute_query
 
@@ -67,18 +68,22 @@ async def get_cart(user_id: int):
         return []
     return result
 
-@router.delete("/cart/{user_id}/{product_id}")
-async def remove_from_cart(user_id: int, product_id: int):
-    # Check if item exists in cart
-    check_query = "SELECT * FROM cart WHERE user_id = %s AND id = %s"
-    check_result = execute_query(check_query, (user_id, product_id))
-    if not check_result:
-        raise HTTPException(status_code=404, detail="Item not found in cart")
+@router.delete("/cart/clear-selected/{user_id}")
+async def clear_selected_cart_items(
+    user_id: int,
+    item_ids: List[int] = Body(..., embed=True)
+):
+    if not item_ids:
+        return {"message": "No items to clear"}
     
-    # Delete the item from cart
-    delete_query = "DELETE FROM cart WHERE user_id = %s AND id = %s"
-    execute_query(delete_query, (user_id, product_id))
-    return {"message": "Item removed from cart"}
+    # Create placeholders for SQL IN clause
+    placeholders = ','.join(['%s'] * len(item_ids))
+    query = f"DELETE FROM cart WHERE user_id = %s AND id IN ({placeholders})"
+    
+    # Execute query with parameters
+    execute_query(query, [user_id] + item_ids)
+    
+    return {"message": f"Cleared {len(item_ids)} items from cart"}
 
 @router.put("/cart/{user_id}/{product_id}")
 async def update_cart_item(

@@ -125,7 +125,7 @@ async def create_order_public(
     user_id = order_request.user_id
 
     try:
-        logger.info(f"Creating PUBLIC order for user {user_id}")
+        logger.info(f"Creating PUBLIC order for user {user_id} with payload: {order_request.dict()}")
 
         # Validate input items
         if not order_request.items:
@@ -133,6 +133,19 @@ async def create_order_public(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No items in order"
             )
+
+        # Validate shipping address exists and belongs to user
+        if order_request.shipping_address_id:
+            address_query = """
+                SELECT id FROM user_addresses 
+                WHERE id = %s AND user_id = %s
+            """
+            address = execute_query(address_query, (order_request.shipping_address_id, user_id))
+            if not address:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid shipping address"
+                )
 
         # Get product prices and availability
         product_ids = tuple(item.product_id for item in order_request.items)
@@ -195,7 +208,7 @@ async def create_order_public(
         )
         next_order_num = cursor.fetchone()['next_order_num']
 
-        # Insert into orders table with user_order_number
+        # Insert into orders table with shipping_address_id
         cursor.execute(
             """
             INSERT INTO orders 
@@ -235,6 +248,7 @@ async def create_order_public(
                 'user_id': str(user_id)
             }
         })
+        logger.info(f"Created Razorpay order: {razorpay_order}")
 
         # Update order with Razorpay ID
         cursor.execute(
@@ -248,16 +262,19 @@ async def create_order_public(
 
         connection.commit()
 
-        return {
+        response_data = {
             "status": "success",
             "order_id": order_id,
-            "user_order_number": next_order_num,  # Add this line
+            "user_order_number": next_order_num,
             "razorpay_order_id": razorpay_order['id'],
             "amount": total_amount,
             "currency": "INR",
             "items": order_items,
+            "shipping_address_id": order_request.shipping_address_id,
             "message": "Order created successfully"
         }
+        logger.info(f"Order created successfully: {response_data}")
+        return response_data
 
     except razorpay.errors.BadRequestError as e:
         if connection:
@@ -280,7 +297,7 @@ async def create_order_public(
             cursor.close()
         if connection and connection.is_connected():
             connection.close()
-
+            
 def migrate_existing_orders():
     connection = get_db1()
     cursor = connection.cursor(dictionary=True)
