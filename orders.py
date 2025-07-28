@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Header, status
+from fastapi import APIRouter, HTTPException, Depends, Header, status, Body
 from pydantic import BaseModel
 from typing import List, Optional
 from db import execute_query, get_db1
@@ -64,6 +64,11 @@ create_orders_table()
 create_order_items_table()
 
 # Pydantic models
+
+class AssignOrdersRequest(BaseModel):
+    agent_id: int
+    order_ids: List[int]
+
 class OrderItem(BaseModel):
     product_id: int
     quantity: int
@@ -505,3 +510,132 @@ async def confirm_razorpay_payment(
             cursor.close()
         if connection and connection.is_connected():
             connection.close()
+
+
+@router.get("/orders/all")
+async def get_all_orders():
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT 
+                o.order_id as id,
+                CONCAT('Order #', o.order_id) as description,
+                MIN(p.mainImageUrl) as mainImageUrl,
+                MIN(p.name) as product_name,
+                a.line1, a.city, a.state, a.pincode,
+                MAX(oi.assigned_agent_id) as assigned_agent_id
+            FROM orders o
+            JOIN order_items oi ON o.order_id = oi.order_id
+            JOIN products p ON oi.product_id = p.id
+            LEFT JOIN user_addresses a ON o.shipping_address_id = a.id
+            GROUP BY o.order_id, a.line1, a.city, a.state, a.pincode
+            HAVING assigned_agent_id IS NULL
+        """)
+        orders = cursor.fetchall()
+        # Format address as a string
+        for order in orders:
+            order["address"] = f"{order.get('line1', '')}, {order.get('city', '')}, {order.get('state', '')} {order.get('pincode', '')}"
+        return {"orders": orders}
+    finally:
+        cursor.close()
+
+@router.post("/orders/assign")
+async def assign_orders_to_agent(payload: AssignOrdersRequest):
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    cursor = db.cursor()
+    try:
+        # Update all order_items for the selected orders
+        format_strings = ','.join(['%s'] * len(payload.order_ids))
+        query = f"""
+            UPDATE order_items
+            SET assigned_agent_id = %s
+            WHERE order_id IN ({format_strings})
+        """
+        cursor.execute(query, [payload.agent_id] + payload.order_ids)
+        db.commit()
+        return {"success": True, "message": "Orders assigned to agent."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+
+@router.get("/orders/assigned")
+async def get_assigned_orders():
+    db = get_db1()
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT
+                a.id as agent_id,
+                a.name as agent_name,
+                o.order_id as id,
+                CONCAT('Order #', o.order_id) as description,
+                MIN(p.mainImageUrl) as mainImageUrl,
+                MIN(p.name) as product_name,
+                ua.line1, ua.city, ua.state, ua.pincode
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.order_id
+            JOIN agent a ON oi.assigned_agent_id = a.id
+            JOIN products p ON oi.product_id = p.id
+            LEFT JOIN user_addresses ua ON o.shipping_address_id = ua.id
+            WHERE oi.assigned_agent_id IS NOT NULL
+            GROUP BY a.id, o.order_id, ua.line1, ua.city, ua.state, ua.pincode
+            ORDER BY a.name, o.order_id DESC
+        """)
+        rows = cursor.fetchall()
+        # Group by agent
+        agents = {}
+        for row in rows:
+            agent_id = row["agent_id"]
+            if agent_id not in agents:
+                agents[agent_id] = {
+                    "agent_id": agent_id,
+                    "agent_name": row["agent_name"],
+                    "orders": []
+                }
+            row["address"] = f"{row.get('line1', '')}, {row.get('city', '')}, {row.get('state', '')} {row.get('pincode', '')}"
+            agents[agent_id]["orders"].append({
+                "id": row["id"],
+                "description": row["description"],
+                "mainImageUrl": row["mainImageUrl"],
+                "product_name": row["product_name"],
+                "address": row["address"]
+            })
+        return list(agents.values())
+    finally:
+        cursor.close()
+
+@router.get("/orders/agent/{agent_id}")
+async def get_orders_by_agent(agent_id: int):
+    db = get_db1()
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT
+                o.order_id as id,
+                CONCAT('Order #', o.order_id) as description,
+                MIN(p.mainImageUrl) as mainImageUrl,
+                MIN(p.name) as product_name,
+                ua.line1, ua.city, ua.state, ua.pincode,
+                u.name as user_name
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.order_id
+            JOIN products p ON oi.product_id = p.id
+            LEFT JOIN user_addresses ua ON o.shipping_address_id = ua.id
+            JOIN users u ON o.user_id = u.id
+            WHERE oi.assigned_agent_id = %s
+            GROUP BY o.order_id, ua.line1, ua.city, ua.state, ua.pincode, u.name
+            ORDER BY o.order_id DESC
+        """, (agent_id,))
+        orders = cursor.fetchall()
+        for order in orders:
+            order["address"] = f"{order.get('line1', '')}, {order.get('city', '')}, {order.get('state', '')} {order.get('pincode', '')}"
+        return {"orders": orders}
+    finally:
+        cursor.close()

@@ -239,7 +239,7 @@ async def login_agent(login_data: AgentLogin):
     
     try:
         # Find agent by email or mobile - INCLUDE PASSWORD FIELD
-        query = "SELECT id, name, email, mobile_number, password FROM ageent WHERE "
+        query = "SELECT id, name, email, mobile_number, password FROM agent WHERE "
         params = []
         
         if login_data.email:
@@ -390,3 +390,18 @@ async def logout(current_agent: dict = Depends(get_current_agent)):
     except Exception as e:
         logger.error(f"Logout error: {str(e)}")
         raise HTTPException(status_code=500, detail="Logout failed")
+
+@router.get("/agents")
+async def get_agents():
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id, name FROM agent")
+        agents = cursor.fetchall()
+        return {"agents": agents}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to fetch agents")
+    finally:
+        cursor.close()
