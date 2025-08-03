@@ -623,6 +623,7 @@ async def get_orders_by_agent(agent_id: int):
                 MIN(p.mainImageUrl) as mainImageUrl,
                 MIN(p.name) as product_name,
                 ua.line1, ua.city, ua.state, ua.pincode,
+                ua.lat, ua.lon, 
                 u.name as user_name
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.order_id
@@ -630,7 +631,7 @@ async def get_orders_by_agent(agent_id: int):
             LEFT JOIN user_addresses ua ON o.shipping_address_id = ua.id
             JOIN users u ON o.user_id = u.id
             WHERE oi.assigned_agent_id = %s
-            GROUP BY o.order_id, ua.line1, ua.city, ua.state, ua.pincode, u.name
+            GROUP BY o.order_id, ua.line1, ua.city, ua.state, ua.pincode, ua.lat, ua.lon, u.name
             ORDER BY o.order_id DESC
         """, (agent_id,))
         orders = cursor.fetchall()
