@@ -10,7 +10,7 @@ def get_db1():
             user=os.getenv("DB_USER"),
             password=os.getenv("DB_PASS"),
             database=os.getenv("DB_NAME"),
-            port=int(os.getenv("DB_PORT", 22956))  # Use DB_PORT, default to 22956
+            port=int(os.getenv("DB_PORT", 56105))  # Use DB_PORT, default to 22956
         )
         if connection.is_connected():
             print("Connected to MySQL database")

@@ -7,23 +7,23 @@ import json
 router = APIRouter()
 
 # SQL query to create the products table
-create_table_query = """
-CREATE TABLE IF NOT EXISTS products (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    price FLOAT NOT NULL,
-    stock INT NOT NULL,
-    category VARCHAR(255),
-    imageUrls JSON,
-    mainImageUrl VARCHAR(255),
-    demanded BOOLEAN,
-    keywords VARCHAR(255)
-)
-"""
+# create_table_query = """
+# CREATE TABLE IF NOT EXISTS products (
+#     id INT AUTO_INCREMENT PRIMARY KEY,
+#     name VARCHAR(255) NOT NULL,
+#     description TEXT,
+#     price FLOAT NOT NULL,
+#     stock INT NOT NULL,
+#     category VARCHAR(255),
+#     imageUrls JSON,
+#     mainImageUrl VARCHAR(255),
+#     demanded BOOLEAN,
+#     keywords VARCHAR(255)
+# )
+# """
 
-# Execute the create table query
-execute_query(create_table_query)
+# # Execute the create table query
+# execute_query(create_table_query)
 
 class Product(BaseModel):
     name: str

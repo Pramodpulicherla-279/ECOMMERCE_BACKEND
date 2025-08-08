@@ -6,19 +6,19 @@ from db import execute_query
 router = APIRouter()
 
 # Add this function to create the cart table
-def create_cart_table():
-    create_table_query = """
-    CREATE TABLE IF NOT EXISTS cart (
-        user_id INT NOT NULL,
-        id INT NOT NULL,
-        quantity INT NOT NULL,
-        PRIMARY KEY (user_id, id)
-    );
-    """
-    execute_query(create_table_query)
+# def create_cart_table():
+#     create_table_query = """
+#     CREATE TABLE IF NOT EXISTS cart (
+#         user_id INT NOT NULL,
+#         id INT NOT NULL,
+#         quantity INT NOT NULL,
+#         PRIMARY KEY (user_id, id)
+#     );
+#     """
+#     execute_query(create_table_query)
 
-# Call the function to create the cart table
-create_cart_table()
+# # Call the function to create the cart table
+# create_cart_table()
 
 class CartItem(BaseModel):
     user_id: int

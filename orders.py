@@ -28,41 +28,41 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Table creation functions
-def create_orders_table():
-    query = """
-    CREATE TABLE IF NOT EXISTS orders (
-        order_id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        payment_date TIMESTAMP NULL,
-        total_amount DECIMAL(10, 2) NOT NULL,
-        status VARCHAR(20) DEFAULT 'Processing',
-        razorpay_order_id VARCHAR(255) NULL,
-        razorpay_payment_id VARCHAR(255) NULL,
-        shipping_address_id INT NULL,
-        order_status INT DEFAULT 1,
-        FOREIGN KEY (user_id) REFERENCES users(id)
-    );
-    """
-    execute_query(query)
+# def create_orders_table():
+#     query = """
+#     CREATE TABLE IF NOT EXISTS orders (
+#         order_id INT AUTO_INCREMENT PRIMARY KEY,
+#         user_id INT NOT NULL,
+#         order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+#         payment_date TIMESTAMP NULL,
+#         total_amount DECIMAL(10, 2) NOT NULL,
+#         status VARCHAR(20) DEFAULT 'Processing',
+#         razorpay_order_id VARCHAR(255) NULL,
+#         razorpay_payment_id VARCHAR(255) NULL,
+#         shipping_address_id INT NULL,
+#         order_status INT DEFAULT 1,
+#         FOREIGN KEY (user_id) REFERENCES users(id)
+#     );
+#     """
+#     execute_query(query)
 
-def create_order_items_table():
-    query = """
-    CREATE TABLE IF NOT EXISTS order_items (
-        order_id INT NOT NULL,
-        product_id INT NOT NULL,
-        quantity INT NOT NULL,
-        price_at_purchase DECIMAL(10, 2) NOT NULL,
-        PRIMARY KEY (order_id, product_id),
-        FOREIGN KEY (order_id) REFERENCES orders(order_id),
-        FOREIGN KEY (product_id) REFERENCES products(id)
-    );
-    """
-    execute_query(query)
+# def create_order_items_table():
+#     query = """
+#     CREATE TABLE IF NOT EXISTS order_items (
+#         order_id INT NOT NULL,
+#         product_id INT NOT NULL,
+#         quantity INT NOT NULL,
+#         price_at_purchase DECIMAL(10, 2) NOT NULL,
+#         PRIMARY KEY (order_id, product_id),
+#         FOREIGN KEY (order_id) REFERENCES orders(order_id),
+#         FOREIGN KEY (product_id) REFERENCES products(id)
+#     );
+#     """
+#     execute_query(query)
 
-# Create tables on startup
-create_orders_table()
-create_order_items_table()
+# # Create tables on startup
+# create_orders_table()
+# create_order_items_table()
 
 # Pydantic models
 
