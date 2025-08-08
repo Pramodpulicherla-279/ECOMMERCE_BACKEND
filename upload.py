@@ -73,6 +73,8 @@ async def get_products(category: Optional[str] = None, keywords: Optional[str] =
 async def get_demanded_products():
     query = "SELECT * FROM products WHERE demanded = TRUE"
     result = execute_query(query)
+    if not result:
+        return []
     for product in result:
         product['imageUrls'] = json.loads(product['imageUrls'])
     return result
