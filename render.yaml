@@ -17,6 +17,8 @@ services:
         value: BXXUIATIBXalIsIsEDyyLCUbsGQZGcPc
       - key: DB_NAME
         value: Ecommerce_Production
+      - key: DB_PORT
+        value: 22956
     plan: free
 
 databases:
