@@ -40,6 +40,7 @@ def create_orders_table():
         razorpay_order_id VARCHAR(255) NULL,
         razorpay_payment_id VARCHAR(255) NULL,
         shipping_address_id INT NULL,
+        order_status INT DEFAULT 1,
         FOREIGN KEY (user_id) REFERENCES users(id)
     );
     """
@@ -217,10 +218,10 @@ async def create_order_public(
         cursor.execute(
             """
             INSERT INTO orders 
-            (user_id, total_amount, status, shipping_address_id, user_order_number) 
-            VALUES (%s, %s, %s, %s, %s)
+            (user_id, total_amount, status, shipping_address_id, user_order_number, order_status) 
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (user_id, total_amount, 'Created', order_request.shipping_address_id, next_order_num)
+            (user_id, total_amount, 'Created', order_request.shipping_address_id, next_order_num, 1)
         )
         order_id = cursor.lastrowid
 
@@ -276,6 +277,7 @@ async def create_order_public(
             "currency": "INR",
             "items": order_items,
             "shipping_address_id": order_request.shipping_address_id,
+            "order_status": 1,
             "message": "Order created successfully"
         }
         logger.info(f"Order created successfully: {response_data}")
@@ -368,7 +370,8 @@ async def get_orders_by_user_id(user_id: int):
             status,
             razorpay_order_id,
             razorpay_payment_id,
-            shipping_address_id
+            shipping_address_id,
+            order_status
         FROM orders
         WHERE user_id = %s 
         ORDER BY order_date DESC
@@ -557,8 +560,36 @@ async def assign_orders_to_agent(payload: AssignOrdersRequest):
             WHERE order_id IN ({format_strings})
         """
         cursor.execute(query, [payload.agent_id] + payload.order_ids)
+
+        # Update order_status to 2 for assigned orders
+        query_orders = f"""
+            UPDATE orders
+            SET order_status = 2
+            WHERE order_id IN ({format_strings})
+        """
+        cursor.execute(query_orders, payload.order_ids)
+
         db.commit()
-        return {"success": True, "message": "Orders assigned to agent."}
+        return {"success": True, "message": "Orders assigned to agent and status updated."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+
+@router.put("/orders/{order_id}/deliver")
+async def mark_order_delivered(order_id: int):
+    db = get_db1()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    cursor = db.cursor()
+    try:
+        cursor.execute(
+            "UPDATE orders SET order_status = 3 WHERE order_id = %s",
+            (order_id,)
+        )
+        db.commit()
+        return {"success": True, "message": "Order marked as delivered.", "order_id": order_id}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -611,7 +642,7 @@ async def get_assigned_orders():
     finally:
         cursor.close()
 
-@router.get("/orders/agent/{agent_id}")
+@router.get("/orders/agent/map/{agent_id}")
 async def get_orders_by_agent(agent_id: int):
     db = get_db1()
     cursor = db.cursor(dictionary=True)
@@ -630,8 +661,39 @@ async def get_orders_by_agent(agent_id: int):
             JOIN products p ON oi.product_id = p.id
             LEFT JOIN user_addresses ua ON o.shipping_address_id = ua.id
             JOIN users u ON o.user_id = u.id
-            WHERE oi.assigned_agent_id = %s
+            WHERE oi.assigned_agent_id = %s AND o.order_status = 2
             GROUP BY o.order_id, ua.line1, ua.city, ua.state, ua.pincode, ua.lat, ua.lon, u.name
+            ORDER BY o.order_id DESC
+        """, (agent_id,))
+        orders = cursor.fetchall()
+        for order in orders:
+            order["address"] = f"{order.get('line1', '')}, {order.get('city', '')}, {order.get('state', '')} {order.get('pincode', '')}"
+        return {"orders": orders}
+    finally:
+        cursor.close()
+
+@router.get("/orders/agent/order-list/{agent_id}")
+async def get_orders_by_agent(agent_id: int):
+    db = get_db1()
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT
+                o.order_id as id,
+                CONCAT('Order #', o.order_id) as description,
+                MIN(p.mainImageUrl) as mainImageUrl,
+                MIN(p.name) as product_name,
+                ua.line1, ua.city, ua.state, ua.pincode,
+                ua.lat, ua.lon, 
+                u.name as user_name,
+                o.order_status
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.order_id
+            JOIN products p ON oi.product_id = p.id
+            LEFT JOIN user_addresses ua ON o.shipping_address_id = ua.id
+            JOIN users u ON o.user_id = u.id
+            WHERE oi.assigned_agent_id = %s 
+            GROUP BY o.order_id, o.order_status, ua.line1, ua.city, ua.state, ua.pincode, ua.lat, ua.lon, u.name
             ORDER BY o.order_id DESC
         """, (agent_id,))
         orders = cursor.fetchall()
